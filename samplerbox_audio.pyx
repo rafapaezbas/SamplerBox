@@ -23,7 +23,9 @@ def mixaudiobuffers(list playingsounds, list rmlist, int frame_count, numpy.ndar
     cdef short* zz
     cdef float* fadeout = <float *> (FADEOUT.data)
 
+
     for snd in playingsounds:
+
         pos = snd.pos
         fadeoutpos = snd.fadeoutpos
         looppos = snd.sound.loop
@@ -63,14 +65,15 @@ def mixaudiobuffers(list playingsounds, list rmlist, int frame_count, numpy.ndar
                 j = pos + ii * speed
                 ii += 1                  
                 k = <int> j
+                v = <float> snd.sound.velocity / 127
                 if k > length - 2:
                     pos = looppos + 1
                     snd.pos = pos
                     ii = 0
                     j = pos + ii * speed   
                     k = <int> j  
-                bb[2 * i] += zz[2 * k] + (j - k) * (zz[2 * k + 2] - zz[2 * k])                                               # linear interpolation
-                bb[2 * i + 1] += zz[2 * k + 1] + (j - k) * (zz[2 * k + 3] - zz[2 * k + 1])
+                bb[2 * i] += (zz[2 * k] + (j - k) * (zz[2 * k + 2] - zz[2 * k])) * v              # linear interpolation
+                bb[2 * i + 1] += (zz[2 * k + 1] + (j - k) * (zz[2 * k + 3] - zz[2 * k + 1])) * v
 
         snd.pos += ii * speed
 

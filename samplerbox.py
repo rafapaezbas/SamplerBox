@@ -14,7 +14,7 @@
 # CONFIG
 #########################################
 
-AUDIO_DEVICE_ID = 2                     # change this number to use another soundcard
+AUDIO_DEVICE_ID = 5                     # change this number to use another soundcard
 SAMPLES_DIR = "."                       # The root directory containing the sample-sets. Example: "/media/" to look for samples on a USB stick / SD card
 USE_SERIALPORT_MIDI = False             # Set to True to enable MIDI IN via SerialPort (e.g. RaspberryPi's GPIO UART pins)
 USE_I2C_7SEGMENTDISPLAY = False         # Set to True to use a 7-segment display via I2C
@@ -140,7 +140,8 @@ class Sound:
 
         wf.close()
 
-    def play(self, note):
+    def play(self, note, velocity):
+        self.velocity = velocity
         snd = PlayingSound(self, note)
         playingsounds.append(snd)
         return snd
@@ -202,7 +203,7 @@ def MidiCallback(message, time_stamp):
     if messagetype == 9:    # Note on
         midinote += globaltranspose
         try:
-            playingnotes.setdefault(midinote, []).append(samples[midinote, velocity].play(midinote))
+            playingnotes.setdefault(midinote, []).append(samples[midinote,messagechannel,127].play(midinote, velocity))
         except:
             pass
 
@@ -314,13 +315,15 @@ def ActuallyLoad():
 
     else:
         for midinote in range(0, 127):
-            if LoadingInterrupt:
-                return
-            file = os.path.join(dirname, "%d.wav" % midinote)
-            if os.path.isfile(file):
-                samples[midinote, 127] = Sound(file, midinote, 127)
+            for channel in range(0, 15):
+                if LoadingInterrupt:
+                    return
+                file = os.path.join(dirname, "%d-%d.wav" % (midinote,channel))
+                if os.path.isfile(file):
+                    samples[midinote,channel,127] = Sound(file, midinote, 127)
 
     initial_keys = set(samples.keys())
+    """
     for midinote in xrange(128):
         lastvelocity = None
         for velocity in xrange(128):
@@ -337,6 +340,8 @@ def ActuallyLoad():
                     samples[midinote, velocity] = samples[midinote-1, velocity]
                 except:
                     pass
+    """
+
     if len(initial_keys) > 0:
         print 'Preset loaded: ' + str(preset)
         display("%04d" % preset)
@@ -351,6 +356,8 @@ def ActuallyLoad():
 #########################################
 
 try:
+
+    print sounddevice.query_devices()
     sd = sounddevice.OutputStream(device=AUDIO_DEVICE_ID, blocksize=512, samplerate=44100, channels=2, dtype='int16', callback=AudioCallback)
     sd.start()
     print 'Opened audio device #%i' % AUDIO_DEVICE_ID
@@ -476,9 +483,10 @@ previous = []
 while True:
     for port in midi_in[0].ports:
         if port not in previous and 'Midi Through' not in port:
-            midi_in.append(rtmidi.MidiIn())
-            midi_in[-1].callback = MidiCallback
-            midi_in[-1].open_port(port)
-            print 'Opened MIDI: ' + port
+            if 'Launchpad' not in port:
+                midi_in.append(rtmidi.MidiIn())
+                midi_in[-1].callback = MidiCallback
+                midi_in[-1].open_port(port)
+                print 'Opened MIDI: ' + port
     previous = midi_in[0].ports
     time.sleep(2)
