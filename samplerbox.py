@@ -15,10 +15,9 @@
 #########################################
 
 AUDIO_DEVICE_ID = 5                     # change this number to use another soundcard
-SAMPLES_DIR = "."                       # The root directory containing the sample-sets. Example: "/media/" to look for samples on a USB stick / SD card
+SAMPLES_DIR = "/home/pi"                # The root directory containing the sample-sets. Example: "/media/" to look for samples on a USB stick / SD card
+OCTAEDRE_DIR_NAME = "octaedre_samples"  # Directory name used for samples
 USE_SERIALPORT_MIDI = False             # Set to True to enable MIDI IN via SerialPort (e.g. RaspberryPi's GPIO UART pins)
-USE_I2C_7SEGMENTDISPLAY = False         # Set to True to use a 7-segment display via I2C
-USE_BUTTONS = False                     # Set to True to use momentary buttons (connected to RaspberryPi's GPIO pins) to change preset
 MAX_POLYPHONY = 80                      # This can be set higher, but 80 is a safe value
 
 
@@ -189,8 +188,7 @@ def AudioCallback(outdata, frame_count, time_info, status):
     outdata[:] = b.reshape(outdata.shape)
 
 def MidiCallback(message, time_stamp):
-    global playingnotes, sustain, sustainplayingnotes
-    global preset
+    global playingnotes
     messagetype = message[0] >> 4
     messagechannel = (message[0] & 15) + 1
     note = message[1] if len(message) > 1 else None
@@ -211,26 +209,8 @@ def MidiCallback(message, time_stamp):
         midinote += globaltranspose
         if midinote in playingnotes:
             for n in playingnotes[midinote]:
-                if sustain:
-                    sustainplayingnotes.append(n)
-                else:
-                    n.fadeout(50)
+                n.fadeout(50)
             playingnotes[midinote] = []
-
-    elif messagetype == 12:  # Program change
-        print 'Program change ' + str(note)
-        preset = note
-        LoadSamples()
-
-    elif (messagetype == 11) and (note == 64) and (velocity < 64):  # sustain pedal off
-        for n in sustainplayingnotes:
-            n.fadeout(50)
-        sustainplayingnotes = []
-        sustain = False
-
-    elif (messagetype == 11) and (note == 64) and (velocity >= 64):  # sustain pedal on
-        sustain = True
-
 
 #########################################
 # LOAD SAMPLES
@@ -259,10 +239,10 @@ NOTES = ["c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"]
 
 
 def ActuallyLoad():
-    global preset
     global samples
     global playingsounds
     global globalvolume, globaltranspose
+    dirname = None
     playingsounds = []
     samples = {}
     globalvolume = 10 ** (-12.0/20)  # -12dB default global volume
@@ -271,89 +251,22 @@ def ActuallyLoad():
     for root, dirs, files in os.walk("/media/pi", topdown=False):
         for name in dirs:
             print name
-            if "octaedre_samples" in name:
+            if OCTAEDRE_DIR_NAME in name:
                 dirname = os.path.join(root, name)
 
-    print 'Loading: ' + dirname
-
-    #basename = next((f for f in os.listdir(samplesdir) if f.startswith("%d " % preset)), None)      # or next(glob.iglob("blah*"), None)
-    #if basename:
-    #    dirname = os.path.join(samplesdir, basename)
-    #if not basename:
-    #    print 'Preset empty: %s' % preset
-    #    display("E%03d" % preset)
-    #    return
-    #display("L%03d" % preset)
-
-    definitionfname = os.path.join(dirname, "definition.txt")
-    if os.path.isfile(definitionfname):
-        with open(definitionfname, 'r') as definitionfile:
-            for i, pattern in enumerate(definitionfile):
-                try:
-                    if r'%%volume' in pattern:        # %%paramaters are global parameters
-                        globalvolume *= 10 ** (float(pattern.split('=')[1].strip()) / 20)
-                        continue
-                    if r'%%transpose' in pattern:
-                        globaltranspose = int(pattern.split('=')[1].strip())
-                        continue
-                    defaultparams = {'midinote': '0', 'velocity': '127', 'notename': ''}
-                    if len(pattern.split(',')) > 1:
-                        defaultparams.update(dict([item.split('=') for item in pattern.split(',', 1)[1].replace(' ', '').replace('%', '').split(',')]))
-                    pattern = pattern.split(',')[0]
-                    pattern = re.escape(pattern.strip())
-                    pattern = pattern.replace(r"\%midinote", r"(?P<midinote>\d+)").replace(r"\%velocity", r"(?P<velocity>\d+)")\
-                                     .replace(r"\%notename", r"(?P<notename>[A-Ga-g]#?[0-9])").replace(r"\*", r".*?").strip()    # .*? => non greedy
-                    for fname in os.listdir(dirname):
-                        if LoadingInterrupt:
-                            return
-                        m = re.match(pattern, fname)
-                        if m:
-                            info = m.groupdict()
-                            midinote = int(info.get('midinote', defaultparams['midinote']))
-                            velocity = int(info.get('velocity', defaultparams['velocity']))
-                            notename = info.get('notename', defaultparams['notename'])
-                            if notename:
-                                midinote = NOTES.index(notename[:-1].lower()) + (int(notename[-1])+2) * 12
-                            samples[midinote, velocity] = Sound(os.path.join(dirname, fname), midinote, velocity)
-                except:
-                    print "Error in definition file, skipping line %s." % (i+1)
-
+    if dirname is not None:
+        print 'Loading: ' + dirname
     else:
-        for midinote in range(0, 127):
-            for channel in range(0, 15):
-                if LoadingInterrupt:
-                    return
-                file = os.path.join(dirname, "%d-%d.wav" % (midinote,channel))
-                if os.path.isfile(file):
-                    samples[midinote,channel,127] = Sound(file, midinote, 127)
+        print 'Error: No samples folder found, please make sure octaedre_samples exists under /media/pi'
+        exit()
 
-    initial_keys = set(samples.keys())
-    """
-    for midinote in xrange(128):
-        lastvelocity = None
-        for velocity in xrange(128):
-            if (midinote, velocity) not in initial_keys:
-                samples[midinote, velocity] = lastvelocity
-            else:
-                if not lastvelocity:
-                    for v in xrange(velocity):
-                        samples[midinote, v] = samples[midinote, velocity]
-                lastvelocity = samples[midinote, velocity]
-        if not lastvelocity:
-            for velocity in xrange(128):
-                try:
-                    samples[midinote, velocity] = samples[midinote-1, velocity]
-                except:
-                    pass
-    """
-
-    if len(initial_keys) > 0:
-        print 'Preset loaded: ' + str(preset)
-        display("%04d" % preset)
-    else:
-        print 'Preset empty: ' + str(preset)
-        display("E%03d" % preset)
-
+    for midinote in range(0, 127):
+        for channel in range(0, 15):
+            if LoadingInterrupt:
+                return
+            file = os.path.join(dirname, "%d-%d.wav" % (midinote,channel))
+            if os.path.isfile(file):
+                samples[midinote,channel,127] = Sound(file, midinote, 127)
 
 #########################################
 # OPEN AUDIO DEVICE
@@ -361,7 +274,6 @@ def ActuallyLoad():
 #########################################
 
 try:
-
     print sounddevice.query_devices()
     sd = sounddevice.OutputStream(device=AUDIO_DEVICE_ID, blocksize=512, samplerate=44100, channels=2, dtype='int16', callback=AudioCallback)
     sd.start()
@@ -369,74 +281,6 @@ try:
 except:
     print 'Invalid audio device #%i' % AUDIO_DEVICE_ID
     exit(1)
-
-
-#########################################
-# BUTTONS THREAD (RASPBERRY PI GPIO)
-#
-#########################################
-
-if USE_BUTTONS:
-    import RPi.GPIO as GPIO
-
-    lastbuttontime = 0
-
-    def Buttons():
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(18, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.setup(17, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        global preset, lastbuttontime
-        while True:
-            now = time.time()
-            if not GPIO.input(18) and (now - lastbuttontime) > 0.2:
-                lastbuttontime = now
-                preset -= 1
-                if preset < 0:
-                    preset = 127
-                LoadSamples()
-
-            elif not GPIO.input(17) and (now - lastbuttontime) > 0.2:
-                lastbuttontime = now
-                preset += 1
-                if preset > 127:
-                    preset = 0
-                LoadSamples()
-
-            time.sleep(0.020)
-
-    ButtonsThread = threading.Thread(target=Buttons)
-    ButtonsThread.daemon = True
-    ButtonsThread.start()
-
-
-#########################################
-# 7-SEGMENT DISPLAY
-#
-#########################################
-
-if USE_I2C_7SEGMENTDISPLAY:
-    import smbus
-
-    bus = smbus.SMBus(1)     # using I2C
-
-    def display(s):
-        for k in '\x76\x79\x00' + s:     # position cursor at 0
-            try:
-                bus.write_byte(0x71, ord(k))
-            except:
-                try:
-                    bus.write_byte(0x71, ord(k))
-                except:
-                    pass
-            time.sleep(0.002)
-
-    display('----')
-    time.sleep(0.5)
-
-else:
-
-    def display(s):
-        pass
 
 
 #########################################
@@ -474,9 +318,7 @@ if USE_SERIALPORT_MIDI:
 #
 #########################################
 
-preset = 0
 LoadSamples()
-
 
 #########################################
 # MIDI DEVICES DETECTION
